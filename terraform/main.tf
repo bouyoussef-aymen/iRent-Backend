@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -280,6 +284,21 @@ resource "aws_ecs_task_definition" "backend" {
       {
         name  = "SPRING_PROFILES_ACTIVE"
         value = "prod"
+      },
+      {
+        name  = "SPRING_DATASOURCE_URL"
+        value = "jdbc:sqlserver://mssql.${var.project_name}.local:1433;databaseName=master;encrypt=false;trustServerCertificate=true"
+      },
+      {
+        name  = "SPRING_DATASOURCE_USERNAME"
+        value = "sa"
+      }
+    ]
+
+    secrets = [
+      {
+        name      = "SPRING_DATASOURCE_PASSWORD"
+        valueFrom = aws_secretsmanager_secret.mssql.arn
       }
     ]
 
@@ -377,3 +396,142 @@ resource "aws_iam_user_policy" "github_actions" {
 data "aws_availability_zones" "available" {
   state = "available"
 }
+
+# -----------------------------
+# MSSQL (ECS Fargate) resources
+# -----------------------------
+
+resource "aws_secretsmanager_secret" "mssql" {
+  name = "${var.project_name}-mssql-sa"
+  tags = var.tags
+}
+
+resource "aws_secretsmanager_secret_version" "mssql" {
+  secret_id     = aws_secretsmanager_secret.mssql.id
+  # Use the MSSQL SA password provided via Terraform variable (defaults to pipeline value)
+  secret_string = var.mssql_sa_password
+}
+
+# Private DNS namespace for service discovery
+resource "aws_service_discovery_private_dns_namespace" "mssql_ns" {
+  name = "${var.project_name}.local"
+  vpc  = aws_vpc.main.id
+  description = "Private namespace for service discovery"
+
+  tags = var.tags
+}
+
+resource "aws_service_discovery_service" "mssql" {
+  name = "mssql"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.mssql_ns.id
+    dns_records {
+      ttl  = 60
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+
+  tags = var.tags
+}
+
+# Security group for MSSQL allowing backend tasks to connect
+resource "aws_security_group" "mssql" {
+  name        = "${var.project_name}-mssql-sg"
+  description = "Security group for MSSQL ECS service"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 1433
+    to_port         = 1433
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_tasks.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, { Name = "${var.project_name}-mssql-sg" })
+}
+
+# ECS Task Definition for MSSQL
+resource "aws_ecs_task_definition" "mssql" {
+  family                   = "${var.project_name}-mssql-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "1024"
+  memory                   = "2048"
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([
+    {
+      name      = "mssql"
+      image     = "mcr.microsoft.com/mssql/server:2022-latest"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 1433
+          protocol      = "tcp"
+        }
+      ]
+
+      environment = [
+        {
+          name  = "ACCEPT_EULA"
+          value = "Y"
+        }
+      ]
+
+      secrets = [
+        {
+          name      = "MSSQL_SA_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.mssql.arn
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "mssql"
+        }
+      }
+    }
+  ])
+
+  tags = var.tags
+}
+
+# ECS Service for MSSQL
+resource "aws_ecs_service" "mssql" {
+  name            = "${var.project_name}-mssql-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.mssql.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.mssql.id]
+    assign_public_ip = true
+  }
+
+  service_registries {
+    registry_arn = aws_service_discovery_service.mssql.arn
+    port         = 1433
+  }
+
+  tags = var.tags
+}
+

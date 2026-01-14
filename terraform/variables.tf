@@ -49,3 +49,9 @@ variable "tags" {
     ManagedBy   = "Terraform"
   }
 }
+
+variable "mssql_sa_password" {
+  description = "MSSQL SA password (pipeline uses this hard-coded value)"
+  type        = string
+  default     = "MyP@ssw0rd123!"
+}

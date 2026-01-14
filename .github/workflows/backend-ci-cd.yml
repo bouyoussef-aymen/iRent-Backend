@@ -84,6 +84,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # local MSSQL run removed: MSSQL will be provisioned via Terraform-managed ECS service
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:

@@ -63,6 +63,16 @@ output "security_group_ecs_tasks" {
   value       = aws_security_group.ecs_tasks.id
 }
 
+output "mssql_service_dns" {
+  description = "DNS name to reach MSSQL via service discovery"
+  value       = "${aws_service_discovery_service.mssql.name}.${aws_service_discovery_private_dns_namespace.mssql_ns.name}"
+}
+
+output "mssql_secret_arn" {
+  description = "ARN of the MSSQL SA password secret in Secrets Manager"
+  value       = aws_secretsmanager_secret.mssql.arn
+}
+
 output "instructions" {
   description = "Next steps after Terraform apply"
   value       = <<-EOT

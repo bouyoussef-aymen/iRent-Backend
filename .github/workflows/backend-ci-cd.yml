@@ -12,10 +12,11 @@ env:
   JAVA_VERSION: "25"
   IMAGE_NAME: backend
   REGISTRY: ghcr.io
-  AZURE_WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
-  AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-  LOG_ANALYTICS_CUSTOMER_ID: ${{ secrets.LOG_ANALYTICS_CUSTOMER_ID }}
-  LOG_ANALYTICS_SHARED_KEY: ${{ secrets.LOG_ANALYTICS_SHARED_KEY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
 
 jobs:
   build-test:
@@ -83,57 +84,64 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login
-        uses: azure/login@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to Web App
-        run: |
-          az webapp config container set \
-            --name ${{ env.AZURE_WEBAPP_NAME }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --docker-custom-image-name ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --docker-registry-server-url https://${{ env.REGISTRY }} \
-            --docker-registry-server-user ${{ github.actor }} \
-            --docker-registry-server-password ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Prepare DORA payload (deploy success)
-        if: success()
-        run: |
-          cat > body.json <<'EOF'
-          {"service":"backend","event":"deploy","status":"success","commit":"${{ github.sha }}","timestamp":"$(date -Iseconds)"}
-          EOF
-
-      - name: Prepare DORA payload (deploy fail)
-        if: failure()
-        run: |
-          cat > body.json <<'EOF'
-          {"service":"backend","event":"deploy","status":"fail","commit":"${{ github.sha }}","timestamp":"$(date -Iseconds)"}
-          EOF
-
-      - name: Send DORA event to Log Analytics
-        if: always()
+      - name: Tag and push image to ECR
         env:
-          LOG_ANALYTICS_CUSTOMER_ID: ${{ env.LOG_ANALYTICS_CUSTOMER_ID }}
-          LOG_ANALYTICS_SHARED_KEY: ${{ env.LOG_ANALYTICS_SHARED_KEY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          if [ ! -f body.json ]; then
-            echo "No body.json found; skipping telemetry."
-            exit 0
-          fi
+          docker pull ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker tag ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }} $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          docker tag ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }} $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          docker push $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:latest
 
-          BODY=$(cat body.json)
-          CONTENT_LENGTH=$(echo -n "$BODY" | wc -c)
-          RFC1123_DATE=$(TZ=GMT date "+%a, %d %b %Y %H:%M:%S GMT")
-          STRING_TO_SIGN="POST\n$CONTENT_LENGTH\napplication/json\nx-ms-date:$RFC1123_DATE\n/api/logs"
-          DECODED_KEY=$(echo -n "$LOG_ANALYTICS_SHARED_KEY" | base64 -d)
-          SIGNATURE=$(printf "$STRING_TO_SIGN" | openssl dgst -binary -sha256 -hmac "$DECODED_KEY" | base64)
-          AUTH="SharedKey $LOG_ANALYTICS_CUSTOMER_ID:$SIGNATURE"
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }} \
+            --query taskDefinition > task-definition.json
 
-          curl -sS -X POST "https://$LOG_ANALYTICS_CUSTOMER_ID.ods.opinsights.azure.com/api/logs?api-version=2016-04-01" \
-            -H "Content-Type: application/json" \
-            -H "Log-Type: DORAEvents" \
-            -H "x-ms-date: $RFC1123_DATE" \
-            -H "Authorization: $AUTH" \
-            -d "$BODY"
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.IMAGE_NAME }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Init DORA CSV
+        if: always()
+        run: echo "service,event,status,commit,timestamp" > dora_events.csv
+
+      - name: Record DORA event (deploy success)
+        if: success()
+        run: printf "backend,deploy,success,${{ github.sha }},$(date -Iseconds)\n" >> dora_events.csv
+
+      - name: Record DORA event (deploy fail)
+        if: failure()
+        run: printf "backend,deploy,fail,${{ github.sha }},$(date -Iseconds)\n" >> dora_events.csv
+
+      - name: Upload DORA CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dora-events
+          path: dora_events.csv

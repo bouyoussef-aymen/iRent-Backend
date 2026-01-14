@@ -43,7 +43,7 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
 
       - name: Maven build and test
-        run: mvn -B -ntp -f mvp/pom.xml clean verify
+        run: mvn -B -ntp -f mvp/pom.xml clean verify -Dspring.profiles.active=ci
         env:
           SPRING_DATASOURCE_URL: jdbc:sqlserver://localhost:1433;databaseName=master;encrypt=false;trustServerCertificate=true
           SPRING_DATASOURCE_USERNAME: sa

@@ -51,29 +51,4 @@ public class AgencyController {
             return ResponseEntity.notFound().build();
         }
     }
-
-    /**
-     * Update agency profile
-     * PUT /api/agencies/{id}
-     * EPIC B2: Agency Management - Create agency profile update API
-     * Vérifie automatiquement que l'utilisateur possède l'agence (Check agency ownership)
-     */
-    @PutMapping("/{id}")
-    public ResponseEntity<AgencyDto> updateAgency(
-            @PathVariable Long id,
-            @RequestBody AgencyRequest request,
-            Authentication authentication) {
-        log.info("Update agency request for agency {} by user: {}", id, authentication.getName());
-        try {
-            String email = authentication.getName();
-            AgencyDto agencyDto = agencyService.updateAgency(id, request, email);
-            return ResponseEntity.ok(agencyDto);
-        } catch (IllegalArgumentException e) {
-            log.warn("Agency update failed: {}", e.getMessage());
-            return ResponseEntity.notFound().build();
-        } catch (IllegalStateException e) {
-            log.warn("Agency update failed - ownership check: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
-    }
 }

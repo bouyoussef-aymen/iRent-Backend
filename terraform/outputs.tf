@@ -73,6 +73,21 @@ output "mssql_secret_arn" {
   value       = aws_secretsmanager_secret.mssql.arn
 }
 
+output "frontend_service_name" {
+  description = "Name of the Frontend ECS service"
+  value       = aws_ecs_service.frontend.name
+}
+
+output "frontend_task_definition_family" {
+  description = "Family name of the Frontend ECS task definition"
+  value       = aws_ecs_task_definition.frontend.family
+}
+
+output "backend_api_url" {
+  description = "Backend API URL (ALB URL with /api prefix)"
+  value       = "http://${aws_lb.main.dns_name}/api"
+}
+
 output "instructions" {
   description = "Next steps after Terraform apply"
   value       = <<-EOT
@@ -92,9 +107,17 @@ output "instructions" {
        - ECS_SERVICE: ${aws_ecs_service.backend.name}
        - ECS_TASK_DEFINITION: ${aws_ecs_task_definition.backend.family}
        - ECR_REPOSITORY: ${aws_ecr_repository.backend.name}
+       
+       For Frontend repository:
+       - AWS_REGION: ${var.aws_region}
+       - ECS_CLUSTER: ${aws_ecs_cluster.main.name}
+       - ECS_SERVICE: ${aws_ecs_service.frontend.name}
+       - ECS_TASK_DEFINITION: ${aws_ecs_task_definition.frontend.family}
+       - BACKEND_API_URL: http://${aws_lb.main.dns_name}/api
     
     3. Your application will be accessible at:
-       http://${aws_lb.main.dns_name}
+       Frontend: http://${aws_lb.main.dns_name}
+       Backend API: http://${aws_lb.main.dns_name}/api
     
     4. View logs:
        aws logs tail ${aws_cloudwatch_log_group.ecs.name} --follow

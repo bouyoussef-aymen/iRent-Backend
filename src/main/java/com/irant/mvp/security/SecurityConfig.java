@@ -63,6 +63,10 @@ public class SecurityConfig {
                         // Protected endpoints
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers("/api/auth/**").authenticated()
+                        // Agency endpoints - authenticated users only
+                        .requestMatchers("/api/agencies/**").authenticated()
+                        // Car endpoints - authenticated users only
+                        .requestMatchers("/api/cars/**").authenticated()
                         // Super admin only
                         .requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
                         // All other requests require authentication
@@ -87,7 +91,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList("http://localhost:3000", "http://localhost:8080"));
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);

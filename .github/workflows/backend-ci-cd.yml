@@ -13,13 +13,12 @@ env:
   IMAGE_NAME: backend
   REGISTRY: ghcr.io
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  # ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-  # ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
-  ECS_CLUSTER: api-service-cluster
-  ECS_SERVICE: api-service-app-service
+  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
+  ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
   ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }}
   ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-  AWS_ROLE_ARN: arn:aws:iam::954976302452:role/github-actions-role
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+  DORA_METRICS_REPO: ${{ github.repository_owner }}/dora-metrics
 
 
 jobs:
@@ -150,6 +149,50 @@ jobs:
       - name: Record DORA event (deploy fail)
         if: failure()
         run: printf "backend,deploy,fail,${{ github.sha }},$(date -Iseconds)\n" >> dora_events.csv
+
+      - name: Send DORA event to dora-metrics (success)
+        if: success()
+        env:
+          DORA_TOKEN: ${{ secrets.DORA_METRICS_TOKEN }}
+        run: |
+          if [ -z "$DORA_TOKEN" ]; then
+            echo "DORA_METRICS_TOKEN not set; skipping push";
+            exit 0;
+          fi
+          payload=$(jq -n \
+            --arg service "backend" \
+            --arg status "success" \
+            --arg commit "${GITHUB_SHA}" \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            --arg ts "$(date -Iseconds)" \
+            '{event_type:"dora-event", client_payload:{service:$service,status:$status,commit:$commit,repo:$repo,timestamp:$ts}}')
+          curl -s -X POST \
+            -H "Authorization: token $DORA_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ env.DORA_METRICS_REPO }}/dispatches \
+            -d "$payload"
+
+      - name: Send DORA event to dora-metrics (fail)
+        if: failure()
+        env:
+          DORA_TOKEN: ${{ secrets.DORA_METRICS_TOKEN }}
+        run: |
+          if [ -z "$DORA_TOKEN" ]; then
+            echo "DORA_METRICS_TOKEN not set; skipping push";
+            exit 0;
+          fi
+          payload=$(jq -n \
+            --arg service "backend" \
+            --arg status "fail" \
+            --arg commit "${GITHUB_SHA}" \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            --arg ts "$(date -Iseconds)" \
+            '{event_type:"dora-event", client_payload:{service:$service,status:$status,commit:$commit,repo:$repo,timestamp:$ts}}')
+          curl -s -X POST \
+            -H "Authorization: token $DORA_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ env.DORA_METRICS_REPO }}/dispatches \
+            -d "$payload"
 
       - name: Upload DORA CSV
         if: always()

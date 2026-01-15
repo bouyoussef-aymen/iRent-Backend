@@ -50,7 +50,7 @@ public class Car {
 
     private String city;
 
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "car_images", joinColumns = @JoinColumn(name = "car_id"))
     @Column(name = "image_url")
     private List<String> imageUrls;

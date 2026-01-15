@@ -28,23 +28,29 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             String jwt = getJwtFromRequest(request);
 
-            if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
-                Long userId = tokenProvider.getUserIdFromToken(jwt);
+            if (StringUtils.hasText(jwt)) {
+                if (tokenProvider.validateToken(jwt)) {
+                    Long userId = tokenProvider.getUserIdFromToken(jwt);
 
-                // Load user details by ID
-                UserDetails userDetails = userDetailsService.loadUserById(userId);
+                    // Load user details by ID
+                    UserDetails userDetails = userDetailsService.loadUserById(userId);
 
-                // Create authentication token
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        userDetails, null, userDetails.getAuthorities());
-                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    // Create authentication token
+                    UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                            userDetails, null, userDetails.getAuthorities());
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-                // Set authentication in security context
-                SecurityContextHolder.getContext().setAuthentication(authentication);
-                log.debug("Set Spring Security context with user: {}", userId);
+                    // Set authentication in security context
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                    log.debug("Set Spring Security context with user: {}", userId);
+                } else {
+                    log.warn("Invalid JWT token for request: {}", request.getRequestURI());
+                }
+            } else {
+                log.debug("No JWT token found in request: {}", request.getRequestURI());
             }
         } catch (Exception ex) {
-            log.error("Could not set user authentication in security context", ex);
+            log.error("Could not set user authentication in security context for request: {}", request.getRequestURI(), ex);
         }
 
         filterChain.doFilter(request, response);

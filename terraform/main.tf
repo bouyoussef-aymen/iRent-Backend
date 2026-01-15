@@ -153,6 +153,31 @@ resource "aws_security_group" "ecs_tasks" {
   })
 }
 
+# Security Group for Frontend ECS Tasks
+resource "aws_security_group" "frontend_tasks" {
+  name        = "${var.project_name}-frontend-ecs-sg"
+  description = "Security group for Frontend ECS tasks"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-frontend-ecs-sg"
+  })
+}
+
 # Application Load Balancer
 resource "aws_lb" "main" {
   name               = "${var.project_name}-alb"
@@ -196,6 +221,65 @@ resource "aws_lb_listener" "http" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.backend.arn
+  }
+}
+
+# Frontend Target Group
+resource "aws_lb_target_group" "frontend" {
+  name        = "${var.project_name}-frontend-tg"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.main.id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    interval            = 30
+    matcher             = "200"
+    path                = "/"
+    port                = "traffic-port"
+    protocol            = "HTTP"
+    timeout             = 5
+    unhealthy_threshold = 2
+  }
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-frontend-tg"
+  })
+}
+
+# Listener Rule for Frontend (serve on /app or default)
+resource "aws_lb_listener_rule" "frontend" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.frontend.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/"]
+    }
+  }
+}
+
+# Backend listener rule (API traffic goes to /api/*)
+resource "aws_lb_listener_rule" "backend_api" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 50
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.backend.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*", "/actuator/*"]
+    }
   }
 }
 
@@ -535,3 +619,67 @@ resource "aws_ecs_service" "mssql" {
   tags = var.tags
 }
 
+# Frontend ECS Task Definition
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "${var.project_name}-frontend-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name      = "${var.project_name}-frontend"
+    image     = "nginx:alpine"  # Will be replaced by GitHub Actions
+    essential = true
+
+    portMappings = [{
+      containerPort = 80
+      protocol      = "tcp"
+    }]
+
+    environment = [
+      {
+        name  = "VITE_ALB_DNS"
+        value = aws_lb.main.dns_name
+      }
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "frontend"
+      }
+    }
+  }])
+
+  tags = var.tags
+}
+
+# Frontend ECS Service
+resource "aws_ecs_service" "frontend" {
+  name            = "${var.project_name}-frontend-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.frontend.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.frontend_tasks.id]
+    assign_public_ip = true
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.frontend.arn
+    container_name   = "${var.project_name}-frontend"
+    container_port   = 80
+  }
+
+  depends_on = [aws_lb_listener.http]
+
+  tags = var.tags
+}

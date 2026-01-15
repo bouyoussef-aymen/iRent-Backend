@@ -138,6 +138,61 @@ jobs:
           echo "✅ ECS service updated with new task definition"
           echo "🚀 Deployment initiated for image: ${{ env.REGISTRY }}/${{ steps.repo-name.outputs.repo_owner_lower }}/${{ steps.repo-name.outputs.repo_name_lower }}:${{ github.sha }}"
 
+      - name: Calculate DORA Metrics - Deployment Frequency
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "DEPLOYMENT_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+          echo "DEPLOYMENT_VERSION=${{ github.sha }}" >> $GITHUB_ENV
+          echo "SERVICE_NAME=backend" >> $GITHUB_ENV
+      
+      - name: Calculate Lead Time for Changes
+        if: github.event_name != 'pull_request'
+        run: |
+          # Get commit timestamp
+          COMMIT_TIME=$(git show -s --format=%cI ${{ github.sha }})
+          DEPLOY_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          echo "COMMIT_TIMESTAMP=$COMMIT_TIME" >> $GITHUB_ENV
+          echo "DEPLOY_TIMESTAMP=$DEPLOY_TIME" >> $GITHUB_ENV
+      
+      - name: Send DORA Metrics to Storage
+        if: github.event_name != 'pull_request'
+        run: |
+          # Create metrics JSON
+          cat > dora-metrics.json << EOF
+          {
+            "timestamp": "${{ env.DEPLOYMENT_TIMESTAMP }}",
+            "service": "${{ env.SERVICE_NAME }}",
+            "deployment_frequency": {
+              "deployment_id": "${{ github.run_id }}",
+              "deployment_time": "${{ env.DEPLOYMENT_TIMESTAMP }}",
+              "branch": "${{ github.ref_name }}",
+              "commit_sha": "${{ github.sha }}"
+            },
+            "lead_time_for_changes": {
+              "commit_timestamp": "${{ env.COMMIT_TIMESTAMP }}",
+              "deploy_timestamp": "${{ env.DEPLOY_TIMESTAMP }}",
+              "commit_sha": "${{ github.sha }}"
+            },
+            "change_failure_rate": {
+              "status": "success",
+              "workflow_run_id": "${{ github.run_id }}"
+            }
+          }
+          EOF
+          
+          # Store metrics (upload as artifact for later processing)
+          mkdir -p metrics
+          cp dora-metrics.json metrics/backend-${{ github.run_id }}.json
+      
+      - name: Upload DORA Metrics Artifact
+        if: github.event_name != 'pull_request' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dora-metrics-backend-${{ github.run_id }}
+          path: metrics/
+          retention-days: 90
+
       - name: Init DORA CSV
         if: always()
         run: echo "service,event,status,commit,timestamp" > dora_events.csv
@@ -200,3 +255,36 @@ jobs:
         with:
           name: dora-events
           path: dora_events.csv
+
+  failure-tracking:
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: deploy
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record Failure Metric
+        run: |
+          cat > failure-metric.json << EOF
+          {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "service": "backend",
+            "change_failure_rate": {
+              "status": "failure",
+              "workflow_run_id": "${{ github.run_id }}",
+              "commit_sha": "${{ github.sha }}",
+              "branch": "${{ github.ref_name }}"
+            }
+          }
+          EOF
+          
+          mkdir -p metrics
+          cp failure-metric.json metrics/backend-failure-${{ github.run_id }}.json
+      
+      - name: Upload Failure Metric
+        uses: actions/upload-artifact@v4
+        with:
+          name: dora-metrics-backend-failure-${{ github.run_id }}
+          path: metrics/
+          retention-days: 90

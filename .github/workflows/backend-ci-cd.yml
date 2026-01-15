@@ -6,7 +6,7 @@ on:
       - "mvp/**"
       - "pom.xml"
   push:
-    branches: [feature/pipeline]
+    branches: [feature/pipeline, main]
 
 env:
   JAVA_VERSION: "25"
@@ -99,7 +99,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
           # aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           # aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -130,8 +130,8 @@ jobs:
       - name: Update ECS service
         run: |
           aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --service ${{ secrets.ECS_SERVICE }} \
             --task-definition ${{ steps.task-def.outputs.task_arn }} \
             --force-new-deployment
           
@@ -169,7 +169,7 @@ jobs:
           curl -s -X POST \
             -H "Authorization: token $DORA_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ env.DORA_METRICS_REPO }}/dispatches \
+            https://api.github.com/repos/${{ secrets.DORA_METRICS_REPO }}/dispatches \
             -d "$payload"
 
       - name: Send DORA event to dora-metrics (fail)

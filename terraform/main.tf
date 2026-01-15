@@ -326,6 +326,25 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Additional policy for Secrets Manager (GHCR credentials)
+resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
+  name = "${var.project_name}-ecs-secrets-policy"
+  role = aws_iam_role.ecs_task_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "secretsmanager:GetSecretValue"
+      ]
+      Resource = [
+        "arn:aws:secretsmanager:us-east-1:954976302452:secret:ghcr-irentfrontend-creds-vZsutZ"
+      ]
+    }]
+  })
+}
+
 # IAM Role for ECS Task
 resource "aws_iam_role" "ecs_task" {
   name = "${var.project_name}-ecs-task-role"
@@ -633,6 +652,10 @@ resource "aws_ecs_task_definition" "frontend" {
     name      = "${var.project_name}-frontend"
     image     = "nginx:alpine"  # Will be replaced by GitHub Actions
     essential = true
+
+    repositoryCredentials = {
+      credentialsParameter = "arn:aws:secretsmanager:us-east-1:954976302452:secret:ghcr-irentfrontend-creds-vZsutZ"
+    }
 
     portMappings = [{
       containerPort = 80

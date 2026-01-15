@@ -108,7 +108,7 @@ jobs:
       - name: Update ECS task definition
         id: task-def
         run: |
-          # Get current task definition
+          # Get current task Definition
           TASK_DEFINITION=$(aws ecs describe-task-definition \
             --task-definition ${{ secrets.ECS_TASK_DEFINITION }} \
             --query 'taskDefinition' \

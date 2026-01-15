@@ -63,6 +63,10 @@ public class SecurityConfig {
                         // Protected endpoints
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers("/api/auth/**").authenticated()
+                        // Agency endpoints - authenticated users only
+                        .requestMatchers("/api/agencies/**").authenticated()
+                        // Car endpoints - authenticated users only
+                        .requestMatchers("/api/cars/**").authenticated()
                         // Super admin only
                         .requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
                         // All other requests require authentication
